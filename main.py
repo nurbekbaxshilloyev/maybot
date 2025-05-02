@@ -5,7 +5,7 @@ import sqlite3
 from typing import List, Dict
 from dotenv import load_dotenv
 from aiohttp import web
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -96,40 +96,56 @@ def get_question(question_id: int) -> Dict:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     register_user(user.id, user.username, user.first_name)
-    await update.message.reply_text('Welcome to LawSupportBot! Send your legal questions, and our admins will respond soon.')
+    keyboard = [
+        [KeyboardButton("ℹ️ Info"), KeyboardButton("📞 Contact"), KeyboardButton("❓ Help")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text('Welcome to LawSupportBot! Send your legal questions, and our admins will respond soon.', reply_markup=reply_markup)
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
+    text = update.message.text
+    if text in ["ℹ️ Info", "📞 Contact", "❓ Help"]:
+        await handle_info_help_contact(update)
+        return
     if user.id in ADMIN_IDS:
         return
-    question = update.message.text
     register_user(user.id, user.username, user.first_name)
-    question_id = save_question(user.id, question)
+    question_id = save_question(user.id, text)
     for admin_id in ADMIN_IDS:
-        keyboard = [[InlineKeyboardButton("Answer", callback_data=f"answer_{question_id}")]]
+        keyboard = [[InlineKeyboardButton("✉️ Answer", callback_data=f"answer_{question_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(
             chat_id=admin_id,
-            text=f"New question from @{user.username} ({user.first_name}):\n\n{question}",
+            text=f"📩 Yangi savol:\n👤 @{user.username or '-'} ({user.first_name})\n\n❓ {text}",
             reply_markup=reply_markup
         )
-    await update.message.reply_text('Your question has been sent to the admins. You will receive a response soon.')
+    await update.message.reply_text('Savolingiz adminlarga yuborildi. Javob tez orada beriladi.')
+
+async def handle_info_help_contact(update: Update) -> None:
+    text = update.message.text
+    if text == "ℹ️ Info":
+        await update.message.reply_text("Bu bot orqali huquqiy savollar berishingiz mumkin.")
+    elif text == "📞 Contact":
+        await update.message.reply_text("Biz bilan aloqa: contact@example.com")
+    elif text == "❓ Help":
+        await update.message.reply_text("Yordam kerakmi? Savolingizni yozing, adminlar tez orada javob berishadi.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
     await query.answer()
     if user.id not in ADMIN_IDS:
-        await query.message.reply_text('This action is for admins only.')
+        await query.message.reply_text('Bu tugma faqat adminlar uchun.')
         return
     data = query.data
     if data.startswith('answer_'):
         question_id = int(data.split('_')[1])
         context.user_data['answering_question_id'] = question_id
-        await query.message.reply_text('Please type your answer to the question.')
+        await query.message.reply_text('Iltimos, javob matnini yozing.')
     elif data == 'broadcast':
-        await query.message.reply_text('Please type the message to broadcast to all users.')
         context.user_data['broadcast_mode'] = True
+        await query.message.reply_text('Yuboriladigan xabarni yozing.')
 
 async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -138,13 +154,13 @@ async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TY
     if context.user_data.get('broadcast_mode'):
         message = update.message.text
         users = get_all_users()
-        for user in users:
+        for u in users:
             try:
-                await context.bot.send_message(chat_id=user['chat_id'], text=message)
+                await context.bot.send_message(chat_id=u['chat_id'], text=message)
             except Exception as e:
-                logger.error(f"Failed to send broadcast to {user['chat_id']}: {e}")
-        await update.message.reply_text(f'Broadcast sent to {len(users)} users.')
+                logger.error(f"Broadcast xatosi ({u['chat_id']}): {e}")
         context.user_data.pop('broadcast_mode', None)
+        await update.message.reply_text(f"Broadcast {len(users)} foydalanuvchiga yuborildi.")
         return
     question_id = context.user_data.get('answering_question_id')
     if not question_id:
@@ -152,26 +168,21 @@ async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TY
     answer = update.message.text
     question = get_question(question_id)
     if not question:
-        await update.message.reply_text('Question not found.')
+        await update.message.reply_text('Savol topilmadi.')
         return
     save_answer(question_id, answer, user.id)
-    await context.bot.send_message(chat_id=question['chat_id'], text=f"Answer from admin:\n\n{answer}")
-    for admin_id in [aid for aid in ADMIN_IDS if aid != user.id]:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=f"Question from @{question['username']} ({question['first_name']}) answered by @{user.username}:\n\nQuestion: {question['question']}\nAnswer: {answer}"
-        )
-    await update.message.reply_text('Answer sent to the user.')
+    await context.bot.send_message(chat_id=question['chat_id'], text=f"📬 Admin javobi:\n\n{answer}")
+    await update.message.reply_text('Javob foydalanuvchiga yuborildi.')
     context.user_data.pop('answering_question_id', None)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if user.id not in ADMIN_IDS:
-        await update.message.reply_text('This command is for admins only.')
+        await update.message.reply_text("Bu komanda faqat adminlar uchun.")
         return
-    keyboard = [[InlineKeyboardButton("Start Broadcast", callback_data="broadcast")]]
+    keyboard = [[InlineKeyboardButton("📢 Start Broadcast", callback_data="broadcast")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Click the button to start broadcasting a message to all users.', reply_markup=reply_markup)
+    await update.message.reply_text("Broadcast boshlash uchun tugmani bosing.", reply_markup=reply_markup)
 
 async def web_server(application):
     async def handle_webhook(request):
@@ -190,9 +201,9 @@ async def web_server(application):
 async def send_admin_test(bot):
     for admin_id in ADMIN_IDS:
         try:
-            await bot.send_message(chat_id=admin_id, text="Bot ishga tushdi va siz admin sifatida belgilangansiz.")
+            await bot.send_message(chat_id=admin_id, text="✅ Bot ishga tushdi. Siz admin sifatida belgilangansiz.")
         except Exception as e:
-            logger.error(f"Admin test message failed: {e}")
+            logger.error(f"Admin test xatosi: {e}")
 
 # Run app
 if __name__ == '__main__':
@@ -202,7 +213,6 @@ if __name__ == '__main__':
     async def main():
         application = Application.builder().token(BOT_TOKEN).build()
 
-        # Handlers
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('broadcast', broadcast))
         application.add_handler(CallbackQueryHandler(button_callback))
