@@ -201,6 +201,9 @@ if __name__ == '__main__':
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_response))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
 
+        # ✅ Fix: initialize() qo‘shildi
+        await application.initialize()
+
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
         app = await web_server(application)
         await application.start()
