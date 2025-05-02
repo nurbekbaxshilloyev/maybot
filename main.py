@@ -17,7 +17,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment
-load_dotenv()
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(dotenv_path)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(',') if id.strip().isdigit()]
@@ -118,49 +119,63 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text("Your question has been sent to the admins.")
 
-# Admin clicks "Answer"
+# Admin clicks "Answer" or Broadcast
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
     await query.answer()
     if user.id not in ADMIN_IDS:
         return
-    if query.data.startswith("answer_"):
-        qid = int(query.data.split("_")[1])
-        context.user_data['answering'] = qid
+
+    data = query.data
+    context.application.user_data.setdefault(user.id, {})
+
+    if data.startswith("answer_"):
+        qid = int(data.split("_")[1])
+        context.application.user_data[user.id]['answering'] = qid
         await query.message.reply_text("Please type your answer.")
-    elif query.data == "broadcast":
-        context.user_data['broadcast_mode'] = True
+
+    elif data == "broadcast":
+        context.application.user_data[user.id]['broadcast_mode'] = True
         await query.message.reply_text("Send the message to broadcast.")
 
-# Admin sends an answer
+# Admin sends response
 async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id not in ADMIN_IDS:
         return
-    if context.user_data.get("broadcast_mode"):
-        for user_data in get_all_users():
+
+    context.application.user_data.setdefault(user.id, {})
+    user_data = context.application.user_data[user.id]
+
+    if user_data.get("broadcast_mode"):
+        for user_data_item in get_all_users():
             try:
-                await context.bot.send_message(chat_id=user_data['chat_id'], text=update.message.text)
+                await context.bot.send_message(chat_id=user_data_item['chat_id'], text=update.message.text)
             except Exception as e:
-                logger.error(f"Failed to broadcast to {user_data['chat_id']}: {e}")
-        context.user_data.pop("broadcast_mode", None)
+                logger.error(f"Failed to broadcast to {user_data_item['chat_id']}: {e}")
+        user_data.pop("broadcast_mode", None)
         await update.message.reply_text("Broadcast sent.")
         return
-    qid = context.user_data.get("answering")
+
+    qid = user_data.get("answering")
     if not qid:
         return
+
     answer = update.message.text
     question = get_question(qid)
     save_answer(qid, answer, user.id)
+
     await context.bot.send_message(chat_id=question['chat_id'], text=f"Admin's answer:\n\n{answer}")
+
     for admin_id in ADMIN_IDS:
         if admin_id != user.id:
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=f"@{question['username']} ({question['first_name']})'s question was answered by @{user.username}:\n\nQ: {question['question']}\nA: {answer}"
             )
-    context.user_data.pop("answering", None)
+
+    user_data.pop("answering", None)
     await update.message.reply_text("Answer sent.")
 
 # Broadcast command
