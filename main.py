@@ -101,28 +101,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    text = update.message.text.lower()
+    text = update.message.text
 
-    if text == "help":
-        await update.message.reply_text("This bot forwards your questions to admins. Just send your message.")
-        return
-    elif text == "info":
-        await update.message.reply_text("This is a support bot. Admins will respond to your question shortly.")
-        return
-    elif text == "contact":
-        await update.message.reply_text("Contact us at support@example.com")
+    if text.lower() in ["help", "info", "contact"]:
+        responses = {
+            "help": "This bot forwards your questions to admins. Just send your message.",
+            "info": "This is a support bot. Admins will respond to your question shortly.",
+            "contact": "Contact us at support@example.com"
+        }
+        await update.message.reply_text(responses[text.lower()])
         return
 
     if user.id in ADMIN_IDS:
         return
 
-    question_id = save_question(user.id, update.message.text)
+    question_id = save_question(user.id, text)
     for admin_id in ADMIN_IDS:
-        button = InlineKeyboardButton("Answer", callback_data=f"answer_{question_id}")
-        keyboard = InlineKeyboardMarkup([[button]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Answer", callback_data=f"answer_{question_id}")]])
         await context.bot.send_message(
             chat_id=admin_id,
-            text=f"New question from @{user.username} ({user.first_name}):\n\n{update.message.text}",
+            text=f"New question from @{user.username} ({user.first_name}):\n\n{text}",
             reply_markup=keyboard
         )
     await update.message.reply_text("Your question has been sent to the admins.")
@@ -136,15 +134,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = query.data
-    chat_data = context.chat_data
-
     if data.startswith("answer_"):
         question_id = int(data.split("_")[1])
-        chat_data["answering"] = question_id
+        context.user_data["answering"] = question_id
         await query.message.reply_text("Please type your answer to the question.")
 
     elif data == "broadcast":
-        chat_data["broadcast_mode"] = True
+        context.user_data["broadcast_mode"] = True
         await query.message.reply_text("Send the message to broadcast to all users.")
 
 async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,19 +148,17 @@ async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TY
     if user.id not in ADMIN_IDS:
         return
 
-    chat_data = context.chat_data
-
-    if chat_data.get("broadcast_mode"):
+    if context.user_data.get("broadcast_mode"):
         for u in get_all_users():
             try:
                 await context.bot.send_message(chat_id=u['chat_id'], text=update.message.text)
             except Exception as e:
                 logger.error(f"Error broadcasting to {u['chat_id']}: {e}")
-        chat_data.pop("broadcast_mode", None)
+        context.user_data.pop("broadcast_mode", None)
         await update.message.reply_text("Broadcast sent.")
         return
 
-    question_id = chat_data.get("answering")
+    question_id = context.user_data.get("answering")
     if not question_id:
         return
 
@@ -185,7 +179,7 @@ async def handle_admin_response(update: Update, context: ContextTypes.DEFAULT_TY
                 text=f"@{question['username']} ({question['first_name']})'s question was answered:\n\nQ: {question['question']}\nA: {answer}"
             )
 
-    chat_data.pop("answering", None)
+    context.user_data.pop("answering", None)
     await update.message.reply_text("Answer sent.")
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
