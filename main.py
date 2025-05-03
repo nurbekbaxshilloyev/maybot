@@ -8,7 +8,7 @@ from typing import List, Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    CallbackQueryHandler, ContextTypes, filters, DictPersistence
 )
 
 # Logging
@@ -217,7 +217,8 @@ if __name__ == "__main__":
     init_db()
 
     async def main():
-        app = Application.builder().token(BOT_TOKEN).build()
+        persistence = DictPersistence()
+        app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
 
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("broadcast", broadcast_command))
