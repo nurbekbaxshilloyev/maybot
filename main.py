@@ -102,6 +102,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Welcome to the bot. Send your question.", reply_markup=reply_markup)
 
+# Foydalanuvchi tugmalari (Help, Info, Contact)
+async def handle_user_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    if text == "help":
+        await update.message.reply_text("Help: Send your question and an admin will reply.")
+    elif text == "info":
+        await update.message.reply_text("Info: This is a support bot to assist you.")
+    elif text == "contact":
+        await update.message.reply_text("Contact: You can reach us through this bot.")
+    else:
+        await handle_question(update, context)
+
 # User sends a question
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -213,7 +225,7 @@ if __name__ == "__main__":
         application.add_handler(CommandHandler("broadcast", broadcast))
         application.add_handler(CallbackQueryHandler(button_callback))
         application.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), handle_admin_response))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_buttons))
 
         await application.initialize()
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
