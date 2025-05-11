@@ -74,7 +74,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=admin_id,
-                text=f"Yangi savol:\n\n{message}\n\nFoydalanuvchi: @{user.username or 'Noma'lum'}",
+                text=f"Yangi savol:\n\n{message}\n\nFoydalanuvchi: @{user.username or 'Nomalum'}",
                 reply_markup=keyboard
             )
         except Exception as e:
