@@ -55,7 +55,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=int(admin_id),
-                text=f"📩 Yangi savol:\n\n{message}\n\n👤 Foydalanuvchi: @{user.username or 'Nomalum'}",
+                text=f"📩 Yangi savol:\n\n{message}\n\n👤 Foydalanuvchi: @{user.username if user.username else 'Nomalum'}",
                 reply_markup=keyboard
             )
         except Exception as e:
@@ -81,9 +81,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = context.user_data.get("answer_user_id")
     is_broadcast = context.user_data.get("is_broadcast", False)
+    text = update.message.text
 
     if is_broadcast:
-        text = update.message.text
         for admin_id in ADMIN_IDS:
             try:
                 await context.bot.send_message(chat_id=int(admin_id), text=f"📢 Broadcast: {text}")
@@ -94,10 +94,15 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if user_id:
-        text = update.message.text
         try:
             await context.bot.send_message(chat_id=user_id, text=f"📨 Sizning savolingizga javob:\n\n{text}")
             await update.message.reply_text("✅ Javob yuborildi.")
+            for admin_id in ADMIN_IDS:
+                if str(update.effective_user.id) != admin_id:
+                    await context.bot.send_message(
+                        chat_id=int(admin_id),
+                        text=f"🔎 Boshqa admin javobi:\n\n{text}"
+                    )
         except Exception as e:
             await update.message.reply_text(f"❌ Javob yuborilmadi: {e}")
         context.user_data["answer_user_id"] = None
@@ -125,8 +130,14 @@ def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=[int(admin_id) for admin_id in ADMIN_IDS]), handle_admin_reply))
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.User(user_id=[int(admin_id) for admin_id in ADMIN_IDS]),
+        handle_admin_reply
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.User(user_id=[int(admin_id) for admin_id in ADMIN_IDS]),
+        handle_message
+    ))
 
     print("✅ Bot ishga tushdi.")
     app.run_polling()
