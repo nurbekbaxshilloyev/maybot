@@ -23,7 +23,7 @@ ADMIN_IDS = os.environ.get("ADMIN_IDS", "").split(",")  # Masalan: "123456,65432
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Assalomu alaykum! Savollaringiz bo‘lsa, yozing.\n/help - yordam"
+        "Assalomu alaykum! Savollaringiz bo‘lsa, yozing.\n/help - yordam  Creator:@bekbrat_cdr"
     )
 
 # /help
