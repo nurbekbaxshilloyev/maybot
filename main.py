@@ -3,7 +3,6 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    constants
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,22 +14,21 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 
-load_dotenv()  # .env fayldan token va admin ID larni yuklaydi
+load_dotenv()
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_IDS = os.environ.get("ADMIN_IDS", "").split(",")  # Masalan: "123456,654321"
+ADMIN_IDS = [int(i) for i in os.environ.get("ADMIN_IDS", "").split(",") if i.strip()]
+
+# Global context for user messages
+pending_answers = {}  # message_id -> user_id
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Assalomu alaykum! Savollaringiz bo‘lsa, yozing.\n/help - yordam"
-    )
+    await update.message.reply_text("Assalomu alaykum! Savollaringiz bo‘lsa, yozing.\n/help - yordam")
 
 # /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🆘 Yordam:\nSavol yuboring va adminlardan javob oling.\n/info - ma'lumot\n/contact - bog‘lanish"
-    )
+    await update.message.reply_text("\n🆘 Yordam:\nSavol yuboring va adminlardan javob oling.\n/info - ma'lumot\n/contact - bog‘lanish")
 
 # /info
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,28 +36,26 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /contact
 async def contact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📞 Biz bilan bog‘lanish: @nurbekbaxshilloyev")
+    await update.message.reply_text("📞 Bog‘lanish: @nurbekbaxshilloyev")
 
-# Foydalanuvchi savolini qabul qilish
+# Savol qabul qilish
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    message = update.message.text
-    context.user_data["last_question"] = message
-    context.user_data["from_user_id"] = user.id
-
+    message = update.message
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user.id}")]
     ])
 
     for admin_id in ADMIN_IDS:
         try:
-            await context.bot.send_message(
-                chat_id=int(admin_id),
-                text=f"📩 Yangi savol:\n\n{message}\n\n👤 Foydalanuvchi: @{user.username or 'Nomalum'}",
+            sent = await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"📩 Yangi savol:\n\n{message.text}\n\n👤 Foydalanuvchi: @{user.username or user.id}",
                 reply_markup=keyboard
             )
+            pending_answers[sent.message_id] = user.id
         except Exception as e:
-            print(f"Xatolik adminga yuborishda: {e}")
+            print(f"Admin {admin_id} ga yuborishda xatolik: {e}")
 
     await update.message.reply_text("✅ Savolingiz adminga yuborildi. Tez orada javob olasiz.")
 
@@ -67,8 +63,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
 
+    data = query.data
     if data.startswith("answer:"):
         user_id = int(data.split(":")[1])
         context.user_data["answer_user_id"] = user_id
@@ -77,36 +73,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["is_broadcast"] = True
         await query.message.reply_text("📢 Yubormoqchi bo‘lgan umumiy xabaringizni yozing:")
 
-# Admin javob yozganda
+# Admin yozgan xabar
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = context.user_data.get("answer_user_id")
     is_broadcast = context.user_data.get("is_broadcast", False)
+    text = update.message.text
 
     if is_broadcast:
-        text = update.message.text
-        for admin_id in ADMIN_IDS:
+        count = 0
+        unique_users = set(pending_answers.values())
+        for uid in unique_users:
             try:
-                await context.bot.send_message(chat_id=int(admin_id), text=f"📢 Broadcast: {text}")
-            except:
-                continue
+                await context.bot.send_message(chat_id=uid, text=f"📢 Admindan xabar:\n{text}")
+                count += 1
+            except Exception as e:
+                print(f"Broadcast xatolik foydalanuvchiga: {e}")
         context.user_data["is_broadcast"] = False
-        await update.message.reply_text("📤 Broadcast yuborildi.")
-        return
-
-    if user_id:
-        text = update.message.text
+        await update.message.reply_text(f"📤 Broadcast yuborildi ({count} foydalanuvchi).")
+    elif user_id:
         try:
-            await context.bot.send_message(chat_id=user_id, text=f"📨 Sizning savolingizga javob:\n\n{text}")
+            await context.bot.send_message(chat_id=user_id, text=f"📨 Admin javobi:\n{text}")
             await update.message.reply_text("✅ Javob yuborildi.")
         except Exception as e:
             await update.message.reply_text(f"❌ Javob yuborilmadi: {e}")
         context.user_data["answer_user_id"] = None
     else:
-        await update.message.reply_text("⚠️ Javob yuborish uchun savol tanlanmagan.")
+        await update.message.reply_text("⚠️ Avval tugmadan foydalanuvchini tanlang.")
 
-# /broadcast buyrug‘i
+# /broadcast komandasi
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) in ADMIN_IDS:
+    if update.effective_user.id in ADMIN_IDS:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📤 Yuborish", callback_data="broadcast")]
         ])
@@ -114,7 +110,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Sizda ruxsat yo‘q.")
 
-# Main
+# Run bot
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -125,12 +121,11 @@ def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=[int(admin_id) for admin_id in ADMIN_IDS]), handle_admin_reply))
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_IDS), handle_admin_reply))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.User(user_id=ADMIN_IDS), handle_message))
 
     print("✅ Bot ishga tushdi.")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-#WEBHOOK_URL=https://worker-production-6d93.up.railway.app
