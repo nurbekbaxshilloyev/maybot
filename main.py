@@ -1,4 +1,5 @@
 import os
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,25 +16,41 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 6459086003  # Faqat bitta admin
 
+USERS_FILE = "users.json"
 user_questions = {}  # foydalanuvchi ID -> savol matni
 
+# --- USER ID saqlash funksiyalari ---
+def load_users():
+    try:
+        with open(USERS_FILE, "r") as f:
+            return set(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
 
-# START
+def save_users(user_ids):
+    with open(USERS_FILE, "w") as f:
+        json.dump(list(user_ids), f)
+
+user_ids = load_users()
+
+# --- START komandasi ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Assalomu alaykum! Savolingizni yozing.")
 
-
-# HELP
+# --- HELP komandasi ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Savolingizni yozing. Admin sizga tez orada javob beradi.")
 
-
-# Foydalanuvchi xabari
+# --- Foydalanuvchi xabari ---
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     text = update.message.text
     user_id = user.id
     user_questions[user_id] = text
+
+    if user_id not in user_ids:
+        user_ids.add(user_id)
+        save_users(user_ids)
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user_id}")],
@@ -47,8 +64,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text("✅ Savolingiz adminga yuborildi.")
 
-
-# CALLBACK
+# --- CALLBACK tugmalari ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -62,8 +78,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["broadcast_mode"] = True
         await query.message.reply_text("📢 Broadcast matnini yozing.")
 
-
-# Admin xabari (javob yoki broadcast)
+# --- Admin javobi yoki broadcast ---
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = context.user_data.get("reply_to_user")
     is_broadcast = context.user_data.get("broadcast_mode", False)
@@ -71,8 +86,14 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_broadcast:
         message = update.message.text
         context.user_data["broadcast_mode"] = False
-        # Broadcast faqat foydalanuvchilarga yuborilmaydi — bu yerda siz user IDs ro'yxatini saqlashingiz mumkin
-        await update.message.reply_text("✅ Broadcast yuborildi.")
+        success, fail = 0, 0
+        for uid in user_ids:
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast:\n\n{message}")
+                success += 1
+            except Exception:
+                fail += 1
+        await update.message.reply_text(f"✅ Broadcast yuborildi.\n📬 Yuborildi: {success}\n❌ Xatolik: {fail}")
         return
 
     if user_id:
@@ -85,8 +106,7 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text("⚠️ Javob yuboriladigan foydalanuvchi tanlanmagan.")
 
-
-# MAIN
+# --- MAIN ---
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
