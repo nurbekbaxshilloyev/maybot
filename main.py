@@ -1,102 +1,90 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
-from dotenv import load_dotenv
+from telegram.ext import (
+    ApplicationBuilder, ContextTypes, CommandHandler,
+    MessageHandler, CallbackQueryHandler, filters
+)
 
-load_dotenv()
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_IDS = [6459086003]  # Faqat 1 ta admin
+# Token va admin ID
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 6459086003  # faqat 1 admin
 
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Assalomu alaykum! Savollaringiz bo‘lsa, yozing.\n/help - yordam")
+    await update.message.reply_text(
+        "Assalomu alaykum!\nSavolingiz bo‘lsa, yozing.\n/help - yordam"
+    )
 
 # /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🆘 Yordam:\nSavol yuboring va adminlardan javob oling.")
+    await update.message.reply_text(
+        "Yordam:\nSavol yuboring va javob kuting.\n/info - ma'lumot\n/contact - bog‘lanish"
+    )
 
 # /info
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ℹ️ Bu bot orqali siz savollarga tezkor javob olasiz.")
+    await update.message.reply_text("Bu bot orqali siz savollarga tezkor javob olasiz.")
 
 # /contact
 async def contact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📞 Biz bilan bog‘lanish: @nurbekbaxshilloyev")
+    await update.message.reply_text("Biz bilan bog‘lanish: @nurbekbaxshilloyev")
 
-# Savol yuborish
+# /broadcast
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("Sizda ruxsat yo‘q.")
+    context.user_data["awaiting_broadcast"] = True
+    await update.message.reply_text("Broadcast xabarini yuboring:")
+
+# Foydalanuvchi xabari
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    user_id = user.id
     message = update.message.text
 
-    # Adminga yuboriladigan tugma
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user_id}")]
+    # Callback tugma
+    button = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user.id}")]
     ])
 
-    context.bot_data[f"question_from_{update.effective_user.id}"] = message
+    # Adminga yuborish
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"📩 Yangi savol:\n\n{message}\n\n👤 @{user.username or 'Nomalum'} (ID: {user.id})",
+        reply_markup=button
+    )
 
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_IDS[0],
-            text=f"📩 Yangi savol:\n\n{message}\n\n👤 @{user.username or 'Nomalum'} (ID: {user_id})",
-            reply_markup=keyboard
-        )
-        await update.message.reply_text("✅ Savolingiz yuborildi. Tez orada javob olasiz.")
-    except Exception as e:
-        await update.message.reply_text(f"Xatolik: {e}")
+    await update.message.reply_text("Savolingiz adminga yuborildi.")
 
-# Callback tugma
+# Callback tugma bosilganda
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     await query.answer()
 
     if data.startswith("answer:"):
-        user_id = int(data.split(":")[1])
-        context.bot_data["pending_answer_user"] = user_id
-        await query.message.reply_text("✍️ Iltimos, javobingizni yozing:")
-    elif data == "broadcast":
-        context.bot_data["is_broadcast"] = True
-        await query.message.reply_text("📢 Yubormoqchi bo‘lgan xabaringizni yozing:")
+        target_user_id = int(data.split(":")[1])
+        context.user_data["reply_to_user"] = target_user_id
+        await query.message.reply_text("Javobingizni yozing:")
 
-# Javob va broadcast
-async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = context.bot_data.get("pending_answer_user")
-    is_broadcast = context.bot_data.get("is_broadcast", False)
-    text = update.message.text
+# Admin matnli javobi
+async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.user_data.get("reply_to_user")
+    broadcast_mode = context.user_data.get("awaiting_broadcast", False)
 
-    if is_broadcast:
-        # Broadcast faqat adminlarga (hozir faqat 1 admin)
-        for admin_id in ADMIN_IDS:
-            await context.bot.send_message(chat_id=admin_id, text=f"📢 Broadcast:\n{text}")
-        context.bot_data["is_broadcast"] = False
-        await update.message.reply_text("✅ Broadcast yuborildi.")
-        return
+    if broadcast_mode:
+        await context.bot.send_message(chat_id=ADMIN_ID, text="📢 Broadcast xabar:")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=update.message.text)
+        context.user_data["awaiting_broadcast"] = False
+        return await update.message.reply_text("✅ Broadcast yuborildi.")
 
     if user_id:
-        try:
-            await context.bot.send_message(chat_id=user_id, text=f"📨 Savolingizga javob:\n\n{text}")
-            await update.message.reply_text("✅ Javob yuborildi.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Xatolik: {e}")
-        context.bot_data["pending_answer_user"] = None
+        await context.bot.send_message(chat_id=user_id, text=f"📨 Admin javobi:\n\n{update.message.text}")
+        await update.message.reply_text("✅ Javob yuborildi.")
+        context.user_data["reply_to_user"] = None
     else:
         await update.message.reply_text("⚠️ Javob yuborish uchun foydalanuvchi tanlanmagan.")
-
-# /broadcast
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id in ADMIN_IDS:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 Broadcast Yuborish", callback_data="broadcast")]
-        ])
-        await update.message.reply_text("Broadcast xabar yuborilsinmi?", reply_markup=keyboard)
-    else:
-        await update.message.reply_text("❌ Siz admin emassiz.")
 
 # Main
 def main():
@@ -111,11 +99,10 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.User(user_id=ADMIN_IDS), handle_admin_reply
+        filters.TEXT & filters.User(user_id=ADMIN_ID), handle_admin_message
     ))
-
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_user_message
+        filters.TEXT & ~filters.User(user_id=ADMIN_ID), handle_user_message
     ))
 
     print("✅ Bot ishga tushdi.")
