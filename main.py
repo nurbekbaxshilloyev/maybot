@@ -95,6 +95,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "broadcast":
             context.user_data["is_broadcast"] = True
             await query.message.reply_text("📨 Broadcast xabarini kiriting:")
+        elif data == "new_question":
+            await query.message.reply_text("✉️ Yangi savolingizni yozing:")
         else:
             await query.message.reply_text("⚠️ Noma'lum callback.")
     except Exception as e:
@@ -122,7 +124,15 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"✅ Broadcast {success_count} foydalanuvchiga yuborildi.")
             context.user_data["is_broadcast"] = False
         elif user_id:
-            await context.bot.send_message(chat_id=user_id, text=f"📨 Admin javobi:\n\n{text}")
+            # "Yana savol yuborish" tugmasi bilan javob yuborish
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("✉️ Yana savol yuborish", callback_data="new_question")]]
+            )
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"📨 Admin javobi:\n\n{text}",
+                reply_markup=keyboard
+            )
             await update.message.reply_text("✅ Javob foydalanuvchiga yuborildi.")
             context.user_data["answer_user_id"] = None
         else:
