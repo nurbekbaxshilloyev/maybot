@@ -18,7 +18,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN topilmadi. .env faylida BOT_TOKEN ni sozlang.")
 
-# Admin ID va foydalanuvchilar ro'yxati
+# Yagona admin ID
 ADMIN_ID = 6459086003
 user_ids = set()
 
@@ -31,7 +31,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # /help komandasi
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🆘 Yordam:\nSavol yuboring va adminlardan javob oling.")
+    await update.message.reply_text("🆘 Yordam: Savol yuboring va adminlardan javob oling.\nAdmin: @bekbrat_cdr")
+
+# /info komandasi
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    info_text = (
+        "ℹ️ Bot funksiyalari:\n"
+        "/start - Botni ishga tushirish\n"
+        "/help - Yordam va admin bilan bog‘lanish\n"
+        "/contact - Admin kontaktlari\n"
+        "✉️ Oddiy xabar yozing - Savolingiz adminga yuboriladi va javob olasiz"
+    )
+    await update.message.reply_text(info_text)
+
+# /contact komandasi
+async def contact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📞 Admin bilan bog‘lanish uchun: @bekbrat_cdr ga yozing.")
 
 # /broadcast komandasi (faqat admin uchun)
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,10 +82,10 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 # Callback query handler
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # Callback query'ga javob berish
+    await query.answer()
     data = query.data
 
-    print(f"Callback qabul qilindi: {data}")  # Debug uchun log
+    print(f"Callback qabul qilindi: {data}")
 
     try:
         if data.startswith("answer:"):
@@ -124,13 +139,15 @@ def main():
         # Handler'larni qo'shish
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("info", info_command))
+        app.add_handler(CommandHandler("contact", contact_command))
         app.add_handler(CommandHandler("broadcast", broadcast_command))
         app.add_handler(CallbackQueryHandler(handle_callback))
         app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), handle_admin_reply))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
 
         print("✅ Bot ishga tushdi.")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)  # Barcha yangilanishlarni qabul qilish
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
         print(f"Botni ishga tushirishda xato: {e}")
 
