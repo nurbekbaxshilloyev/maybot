@@ -78,7 +78,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 text=f"📩 Yangi xabar:\n\n{update.message.text}\n\n👤 @{user.username or 'Nomaʼlum'} (ID: {user.id})",
                 reply_markup=keyboard,
             )
-            await update.message.reply_text("✅ Savolingiz adminga yuborildi. Tez orada javob olasiz.")
+            await update.message.reply_text("✅ Savolingiz yuristga yuborildi. Tez orada javob olasiz.")
             # Savol yuborilgandan keyin holatni o'chirish
             context.user_data["expecting_question"] = False
         except Exception as e:
