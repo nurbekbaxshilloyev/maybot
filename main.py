@@ -26,6 +26,8 @@ user_ids = set()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_ids.add(user_id)
+    # Dastlabki holatni o'rnatish
+    context.user_data["expecting_question"] = True
     await update.message.reply_text("Assalomu alaykum! Savollaringiz bo‘lsa, yozing.")
     print(f"Foydalanuvchi {user_id} /start komandasini ishlatdi.")
 
@@ -40,7 +42,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Botni ishga tushirish\n"
         "/help - Yordam va admin bilan bog‘lanish\n"
         "/contact - Admin kontaktlari\n"
-        "✉️ Oddiy xabar yozing - Savolingiz adminga yuboriladi va javob olasiz"
+        "✉️ Savol yuborish - Admin javobidan keyin 'Yana savol yuborish' tugmasini bosing"
     )
     await update.message.reply_text(info_text)
 
@@ -64,20 +66,27 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     user_ids.add(user.id)
 
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user.id}")]]
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"📩 Yangi xabar:\n\n{update.message.text}\n\n👤 @{user.username or 'Nomaʼlum'} (ID: {user.id})",
-            reply_markup=keyboard,
+    # Faqat savol kutilayotgan bo'lsa xabarni qayta ishlash
+    if context.user_data.get("expecting_question", False):
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user.id}")]]
         )
-        await update.message.reply_text("✅ Savolingiz adminga yuborildi. Tez orada javob olasiz.")
-    except Exception as e:
-        print(f"Foydalanuvchi xabarini yuborishda xato: {e}")
-        await update.message.reply_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.")
+
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"📩 Yangi xabar:\n\n{update.message.text}\n\n👤 @{user.username or 'Nomaʼlum'} (ID: {user.id})",
+                reply_markup=keyboard,
+            )
+            await update.message.reply_text("✅ Savolingiz adminga yuborildi. Tez orada javob olasiz.")
+            # Savol yuborilgandan keyin holatni o'chirish
+            context.user_data["expecting_question"] = False
+        except Exception as e:
+            print(f"Foydalanuvchi xabarini yuborishda xato: {e}")
+            await update.message.reply_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.")
+    else:
+        # Agar savol kutilmasa, tugmani bosishni so'rash
+        await update.message.reply_text("Iltimos, savol yuborish uchun 'Yana savol yuborish' tugmasini bosing.")
 
 # Callback query handler
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,6 +105,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["is_broadcast"] = True
             await query.message.reply_text("📨 Broadcast xabarini kiriting:")
         elif data == "new_question":
+            context.user_data["expecting_question"] = True
             await query.message.reply_text("✉️ Yangi savolingizni yozing:")
         else:
             await query.message.reply_text("⚠️ Noma'lum callback.")
