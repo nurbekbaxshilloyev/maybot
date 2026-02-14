@@ -1,0 +1,206 @@
+import sqlite3
+from typing import Optional, List, Tuple
+from datetime import datetime
+
+class DB:
+    def __init__(self, path: str):
+        self.path = path
+        self._init()
+
+    def _conn(self):
+        return sqlite3.connect(self.path)
+
+    def _init(self):
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users(
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    full_name TEXT,
+                    created_at TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    question TEXT,
+                    answer TEXT,
+                    answered_by INTEGER,
+                    status TEXT,              -- open / in_progress / answered
+                    claimed_by INTEGER,        -- admin id
+                    created_at TEXT,
+                    claimed_at TEXT,
+                    answered_at TEXT
+                )
+            """)
+            con.commit()
+
+    def upsert_user(self, user_id: int, username: str, full_name: str):
+        now = datetime.utcnow().isoformat()
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                INSERT INTO users(user_id, username, full_name, created_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username=excluded.username,
+                    full_name=excluded.full_name
+            """, (user_id, username, full_name, now))
+            con.commit()
+
+    def create_ticket(self, user_id: int, question: str) -> int:
+        now = datetime.utcnow().isoformat()
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                INSERT INTO tickets(user_id, question, answer, answered_by, status, claimed_by, created_at, claimed_at, answered_at)
+                VALUES(?, ?, NULL, NULL, 'open', NULL, ?, NULL, NULL)
+            """, (user_id, question, now))
+            con.commit()
+            return cur.lastrowid
+
+    def get_ticket(self, ticket_id: int) -> Optional[Tuple]:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                SELECT id, user_id, question, answer, answered_by, status, claimed_by, created_at, claimed_at, answered_at
+                FROM tickets WHERE id=?
+            """, (ticket_id,))
+            return cur.fetchone()
+
+    # ✅ LOCK: open -> in_progress (faqat 1 admin oladi)
+    def claim_ticket(self, ticket_id: int, admin_id: int) -> Tuple[bool, str, Optional[int]]:
+        """
+        returns: (success, message, claimed_by)
+        """
+        now = datetime.utcnow().isoformat()
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT status, claimed_by FROM tickets WHERE id=?", (ticket_id,))
+            row = cur.fetchone()
+            if not row:
+                return False, "Ticket topilmadi.", None
+
+            status, claimed_by = row[0], row[1]
+
+            if status == "answered":
+                return False, "Bu savolga allaqachon javob berilgan.", claimed_by
+
+            if status == "in_progress":
+                if claimed_by == admin_id:
+                    return True, "Siz bu ticketni allaqachon olgansiz.", claimed_by
+                return False, "Bu ticketni boshqa admin olib bo‘lgan.", claimed_by
+
+            # status == open
+            cur.execute("""
+                UPDATE tickets
+                SET status='in_progress', claimed_by=?, claimed_at=?
+                WHERE id=? AND status='open'
+            """, (admin_id, now, ticket_id))
+
+            if cur.rowcount == 1:
+                con.commit()
+                return True, "Ticket sizga biriktirildi.", admin_id
+
+            # Kimdir sizdan oldin claim qilgan bo‘lishi mumkin
+            cur.execute("SELECT status, claimed_by FROM tickets WHERE id=?", (ticket_id,))
+            row2 = cur.fetchone()
+            return False, "Bu ticketni boshqa admin olib bo‘lgan.", row2[1] if row2 else None
+
+    def unclaim_ticket(self, ticket_id: int, admin_id: int) -> Tuple[bool, str]:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                UPDATE tickets
+                SET status='open', claimed_by=NULL, claimed_at=NULL
+                WHERE id=? AND status='in_progress' AND claimed_by=?
+            """, (ticket_id, admin_id))
+            con.commit()
+            if cur.rowcount == 1:
+                return True, "Ticket bo‘shatildi (open)."
+            return False, "Ticketni bo‘shatib bo‘lmadi (sizga biriktirilmagan bo‘lishi mumkin)."
+
+    def answer_ticket(self, ticket_id: int, answer: str, admin_id: int) -> Tuple[bool, str]:
+        now = datetime.utcnow().isoformat()
+        with self._conn() as con:
+            cur = con.cursor()
+
+            # faqat claim qilgan admin javob bersin
+            cur.execute("SELECT status, claimed_by FROM tickets WHERE id=?", (ticket_id,))
+            row = cur.fetchone()
+            if not row:
+                return False, "Ticket topilmadi."
+
+            status, claimed_by = row[0], row[1]
+            if status == "answered":
+                return False, "Allaqachon javob berilgan."
+            if status != "in_progress" or claimed_by != admin_id:
+                return False, "Bu ticket sizga biriktirilmagan. Avval ticketni oling (claim)."
+
+            cur.execute("""
+                UPDATE tickets
+                SET answer=?, answered_by=?, status='answered', answered_at=?
+                WHERE id=? AND status='in_progress' AND claimed_by=?
+            """, (answer, admin_id, now, ticket_id, admin_id))
+            con.commit()
+            if cur.rowcount == 1:
+                return True, "Javob saqlandi."
+            return False, "Javob saqlanmadi."
+
+    def user_count(self) -> int:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT COUNT(*) FROM users")
+            return int(cur.fetchone()[0])
+
+    def ticket_count(self) -> int:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT COUNT(*) FROM tickets")
+            return int(cur.fetchone()[0])
+
+    def ticket_count_by_status(self, status: str) -> int:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT COUNT(*) FROM tickets WHERE status=?", (status,))
+            return int(cur.fetchone()[0])
+
+    def get_recent_tickets(self, limit: int = 10, status: Optional[str] = None) -> List[Tuple]:
+        with self._conn() as con:
+            cur = con.cursor()
+            if status:
+                cur.execute("""
+                    SELECT id, user_id, question, status, claimed_by, created_at
+                    FROM tickets
+                    WHERE status=?
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (status, limit))
+            else:
+                cur.execute("""
+                    SELECT id, user_id, question, status, claimed_by, created_at
+                    FROM tickets
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (limit,))
+            return cur.fetchall()
+
+    def get_user_history(self, user_id: int, limit: int = 10) -> List[Tuple]:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("""
+                SELECT id, question, COALESCE(answer,'(javob berilmagan)'), status, created_at
+                FROM tickets
+                WHERE user_id=?
+                ORDER BY id DESC
+                LIMIT ?
+            """, (user_id, limit))
+            return cur.fetchall()
+
+    def get_all_user_ids(self) -> List[int]:
+        with self._conn() as con:
+            cur = con.cursor()
+            cur.execute("SELECT user_id FROM users")
+            return [int(r[0]) for r in cur.fetchall()]

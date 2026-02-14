@@ -1,175 +1,256 @@
-import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ContextTypes, filters
 )
-from dotenv import load_dotenv
+from config import BOT_TOKEN, ADMIN_IDS, DB_PATH
+from db import DB
+import keyboards as kb
 
-# .env faylini yuklash
-load_dotenv()
+db = DB(DB_PATH)
 
-# Bot tokenini olish
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN topilmadi. .env faylida BOT_TOKEN ni sozlang.")
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
-# Yagona admin ID
-ADMIN_ID = 6459086003
-user_ids = set()
-
-# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_ids.add(user_id)
-    # Dastlabki holatni o'rnatish
-    context.user_data["expecting_question"] = True
-    await update.message.reply_text("Assalomu alaykum! Savollaringiz bo‘lsa, yozing.")
-    print(f"Foydalanuvchi {user_id} /start komandasini ishlatdi.")
+    u = update.effective_user
+    db.upsert_user(u.id, u.username or "", (u.full_name or "").strip())
+    context.user_data["state"] = None
+    await update.message.reply_text("Assalomu alaykum! Menyudan tanlang 👇", reply_markup=kb.user_menu())
 
-# /help komandasi
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🆘 Yordam: Savol yuboring va adminlardan javob oling.\nAdmin: @bekbrat_cdr")
+    await update.message.reply_text("🆘 Yordam: Menyudan 'Savol yuborish' ni tanlang.")
 
-# /info komandasi
-async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    info_text = (
-        "ℹ️ Bot funksiyalari:\n"
-        "/start - Botni ishga tushirish\n"
-        "/help - Yordam va admin bilan bog‘lanish\n"
-        "/contact - Admin kontaktlari\n"
-        "✉️ Savol yuborish - Admin javobidan keyin 'Yana savol yuborish' tugmasini bosing"
-    )
-    await update.message.reply_text(info_text)
-
-# /contact komandasi
-async def contact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📞 Admin bilan bog‘lanish uchun: @bekbrat_cdr ga yozing.")
-
-# /broadcast komandasi (faqat admin uchun)
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("Sizda ruxsat yo‘q.")
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Siz admin emassiz.")
         return
+    context.user_data["state"] = None
+    await update.message.reply_text("🛠 Admin panel:", reply_markup=kb.admin_panel())
 
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📢 Broadcast yuborish", callback_data="broadcast")]]
-    )
-    await update.message.reply_text("Broadcast yubormoqchimisiz?", reply_markup=keyboard)
-
-# Oddiy foydalanuvchi xabari
-async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_ids.add(user.id)
-
-    # Faqat savol kutilayotgan bo'lsa xabarni qayta ishlash
-    if context.user_data.get("expecting_question", False):
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✉️ Javob yozish", callback_data=f"answer:{user.id}")]]
-        )
-
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"📩 Yangi xabar:\n\n{update.message.text}\n\n👤 @{user.username or 'Nomaʼlum'} (ID: {user.id})",
-                reply_markup=keyboard,
-            )
-            await update.message.reply_text("✅ Savolingiz yuristga yuborildi. Tez orada javob olasiz.")
-            # Savol yuborilgandan keyin holatni o'chirish
-            context.user_data["expecting_question"] = False
-        except Exception as e:
-            print(f"Foydalanuvchi xabarini yuborishda xato: {e}")
-            await update.message.reply_text("❌ Xatolik yuz berdi. Iltimos, qayta urinib ko‘ring.")
-    else:
-        # Agar savol kutilmasa, tugmani bosishni so'rash
-        await update.message.reply_text("Iltimos, savol yuborish uchun 'Yana savol yuborish' tugmasini bosing.")
-
-# Callback query handler
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    uid = query.from_user.id
 
-    print(f"Callback qabul qilindi: {data}")
+    # USER callbacks
+    if data.startswith("u:"):
+        action = data.split(":", 1)[1]
+        if action == "menu":
+            context.user_data["state"] = None
+            await query.message.reply_text("🏠 Menyu:", reply_markup=kb.user_menu())
 
-    try:
-        if data.startswith("answer:"):
-            user_id = int(data.split(":")[1])
-            context.user_data["answer_user_id"] = user_id
-            await query.message.reply_text("✍️ Iltimos, foydalanuvchiga yuboriladigan javobni yozing:")
-        elif data == "broadcast":
-            context.user_data["is_broadcast"] = True
-            await query.message.reply_text("📨 Broadcast xabarini kiriting:")
-        elif data == "new_question":
-            context.user_data["expecting_question"] = True
-            await query.message.reply_text("✉️ Yangi savolingizni yozing:")
-        else:
-            await query.message.reply_text("⚠️ Noma'lum callback.")
-    except Exception as e:
-        print(f"Callback ishlov berishda xato: {e}")
-        await query.message.reply_text("❌ Xatolik yuz berdi.")
+        elif action == "ask":
+            context.user_data["state"] = "WAIT_QUESTION"
+            await query.message.reply_text("✉️ Savolingizni yozing:")
 
-# Admin javobi
-async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+        elif action == "history":
+            rows = db.get_user_history(uid, limit=10)
+            if not rows:
+                await query.message.reply_text("🕓 Hozircha tarix yo‘q.", reply_markup=kb.user_menu())
+                return
+            out = ["🕓 So‘nggi 10 ta savolingiz:"]
+            for tid, q, a, status, created_at in rows:
+                out.append(f"\n#{tid} • {status}\n❓ {q}\n✅ {a}")
+            await query.message.reply_text("\n".join(out), reply_markup=kb.user_menu())
+
+        elif action == "info":
+            await query.message.reply_text(
+                "ℹ️ Bot funksiyalari:\n• Savol yuborish\n• Admin javobi\n• Savollar tarixi\n• Admin panel + broadcast",
+                reply_markup=kb.user_menu()
+            )
+
+        elif action == "contact":
+            await query.message.reply_text("📞 Bot orqali savol yuboring — adminlar javob qaytaradi.", reply_markup=kb.user_menu())
         return
 
-    user_id = context.user_data.get("answer_user_id")
-    is_broadcast = context.user_data.get("is_broadcast", False)
-    text = update.message.text
+    # ADMIN callbacks
+    if data.startswith("a:"):
+        if not is_admin(uid):
+            await query.message.reply_text("Siz admin emassiz.")
+            return
 
-    try:
-        if is_broadcast:
-            success_count = 0
+        parts = data.split(":")
+        action = parts[1]
+
+        if action == "panel":
+            context.user_data["state"] = None
+            await query.message.reply_text("🛠 Admin panel:", reply_markup=kb.admin_panel())
+
+        elif action == "stats":
+            uc = db.user_count()
+            tc = db.ticket_count()
+            open_c = db.ticket_count_by_status("open")
+            prog_c = db.ticket_count_by_status("in_progress")
+            ans_c = db.ticket_count_by_status("answered")
+            await query.message.reply_text(
+                f"📊 Statistika:\n"
+                f"👥 Userlar: {uc}\n"
+                f"🧾 Jami ticket: {tc}\n"
+                f"🟢 Open: {open_c}\n"
+                f"🟡 In progress: {prog_c}\n"
+                f"✅ Answered: {ans_c}",
+                reply_markup=kb.admin_back_panel()
+            )
+
+        elif action == "filter_menu":
+            await query.message.reply_text("🧾 Filtr tanlang:", reply_markup=kb.admin_filter_menu())
+
+        elif action == "list":
+            # a:list:<status>
+            status = parts[2]
+            if status == "all":
+                rows = db.get_recent_tickets(limit=15, status=None)
+                title = "🧾 So‘nggi 15 ticket (hammasi):"
+            else:
+                rows = db.get_recent_tickets(limit=15, status=status)
+                title = f"🧾 So‘nggi 15 ticket ({status}):"
+
+            if not rows:
+                await query.message.reply_text("Hozircha ticket yo‘q.", reply_markup=kb.admin_filter_menu())
+                return
+
+            out = [title]
+            for tid, user_id, q, st, claimed_by, created_at in rows:
+                who = f" | claimed_by: {claimed_by}" if claimed_by else ""
+                out.append(f"\n#{tid} • {st}{who} • user:{user_id}\n❓ {q}")
+            await query.message.reply_text("\n".join(out), reply_markup=kb.admin_filter_menu())
+
+        elif action == "broadcast":
+            context.user_data["state"] = "ADMIN_BROADCAST"
+            await query.message.reply_text("📢 Broadcast uchun matn yozing:")
+
+        elif action == "claim":
+            ticket_id = int(parts[2])
+            ok, msg, claimed_by = db.claim_ticket(ticket_id, uid)
+            if not ok:
+                extra = f"\n👤 claimed_by: {claimed_by}" if claimed_by else ""
+                await query.message.reply_text(f"⚠️ {msg}{extra}", reply_markup=kb.admin_back_panel())
+                return
+            # claim bo‘ldi — endi javob yozishga o‘tish yoki unclaim
+            await query.message.reply_text(f"✅ {msg}\nTicket: #{ticket_id}", reply_markup=kb.admin_claimed_actions(ticket_id))
+
+        elif action == "unclaim":
+            ticket_id = int(parts[2])
+            ok, msg = db.unclaim_ticket(ticket_id, uid)
+            if ok:
+                await query.message.reply_text(f"✅ {msg}", reply_markup=kb.admin_back_panel())
+            else:
+                await query.message.reply_text(f"⚠️ {msg}", reply_markup=kb.admin_back_panel())
+
+        elif action == "answer":
+            ticket_id = int(parts[2])
+            ticket = db.get_ticket(ticket_id)
+            if not ticket:
+                await query.message.reply_text("Ticket topilmadi.", reply_markup=kb.admin_back_panel())
+                return
+
+            status = ticket[5]
+            claimed_by = ticket[6]
+            if status != "in_progress" or claimed_by != uid:
+                await query.message.reply_text(
+                    "⚠️ Javob yozish uchun ticket sizga biriktirilgan bo‘lishi kerak.\n"
+                    "Avval 'Javob yozish (claim)' ni bosing.",
+                    reply_markup=kb.admin_back_panel()
+                )
+                return
+
+            context.user_data["state"] = "ADMIN_ANSWER"
+            context.user_data["answer_ticket_id"] = ticket_id
+            await query.message.reply_text(f"✍️ #{ticket_id} uchun javob yozing:")
+
+        return
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    text = update.message.text.strip()
+    db.upsert_user(u.id, u.username or "", (u.full_name or "").strip())
+    state = context.user_data.get("state")
+
+    # ADMIN flow
+    if is_admin(u.id):
+        if state == "ADMIN_BROADCAST":
+            user_ids = db.get_all_user_ids()
+            sent = 0
             for uid in user_ids:
                 try:
                     await context.bot.send_message(chat_id=uid, text=f"📢 {text}")
-                    success_count += 1
-                except Exception as e:
-                    print(f"Broadcast xatosi (ID: {uid}): {e}")
-            await update.message.reply_text(f"✅ Broadcast {success_count} foydalanuvchiga yuborildi.")
-            context.user_data["is_broadcast"] = False
-        elif user_id:
-            # "Yana savol yuborish" tugmasi bilan javob yuborish
-            keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("✉️ Yana savol yuborish", callback_data="new_question")]]
-            )
+                    sent += 1
+                except:
+                    pass
+            context.user_data["state"] = None
+            await update.message.reply_text(f"✅ Broadcast yuborildi: {sent} ta user.", reply_markup=kb.admin_panel())
+            return
+
+        if state == "ADMIN_ANSWER":
+            ticket_id = context.user_data.get("answer_ticket_id")
+            ticket = db.get_ticket(ticket_id) if ticket_id else None
+            if not ticket:
+                context.user_data["state"] = None
+                await update.message.reply_text("⚠️ Ticket topilmadi.", reply_markup=kb.admin_panel())
+                return
+
+            ok, msg = db.answer_ticket(ticket_id, text, u.id)
+            if not ok:
+                # ticket sizga tegishli emas yoki status mos emas
+                context.user_data["state"] = None
+                context.user_data["answer_ticket_id"] = None
+                await update.message.reply_text(f"⚠️ {msg}", reply_markup=kb.admin_panel())
+                return
+
+            user_id = ticket[1]
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"📨 Admin javobi:\n\n{text}",
-                reply_markup=keyboard
+                text=f"📨 Admin javobi (#{ticket_id}):\n\n{text}",
+                reply_markup=kb.after_answer_menu()
             )
-            await update.message.reply_text("✅ Javob foydalanuvchiga yuborildi.")
-            context.user_data["answer_user_id"] = None
-        else:
-            await update.message.reply_text("⚠️ Javob yuboriladigan foydalanuvchi aniqlanmadi.")
-    except Exception as e:
-        print(f"Admin javobida xato: {e}")
-        await update.message.reply_text(f"❌ Xatolik: {e}")
 
-# Main funksiya
+            context.user_data["state"] = None
+            context.user_data["answer_ticket_id"] = None
+            await update.message.reply_text("✅ Javob yuborildi.", reply_markup=kb.admin_panel())
+            return
+
+        await update.message.reply_text("🛠 Admin panel uchun /admin ni bosing.", reply_markup=kb.admin_panel())
+        return
+
+    # USER flow
+    if state == "WAIT_QUESTION":
+        ticket_id = db.create_ticket(u.id, text)
+
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=(
+                        f"📩 Yangi savol (#{ticket_id}):\n\n"
+                        f"{text}\n\n"
+                        f"👤 @{u.username or 'Nomaʼlum'} | {u.full_name or ''}\n"
+                        f"🆔 ID: {u.id}"
+                    ),
+                    reply_markup=kb.admin_claim_button(ticket_id)  # ✅ claim tugmasi
+                )
+            except:
+                pass
+
+        context.user_data["state"] = None
+        await update.message.reply_text("✅ Savolingiz adminlarga yuborildi.", reply_markup=kb.user_menu())
+        return
+
+    await update.message.reply_text("Menyudan tanlang 👇", reply_markup=kb.user_menu())
+
 def main():
-    try:
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        # Handler'larni qo'shish
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", help_command))
-        app.add_handler(CommandHandler("info", info_command))
-        app.add_handler(CommandHandler("contact", contact_command))
-        app.add_handler(CommandHandler("broadcast", broadcast_command))
-        app.add_handler(CallbackQueryHandler(handle_callback))
-        app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), handle_admin_reply))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("admin", admin_command))
 
-        print("✅ Bot ishga tushdi.")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        print(f"Botni ishga tushirishda xato: {e}")
+    app.add_handler(CallbackQueryHandler(callback_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    print("✅ Bot ishga tushdi.")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
